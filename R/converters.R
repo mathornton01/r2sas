@@ -365,9 +365,21 @@ r2sas_plot <- function(line, verbose = FALSE) {
   cond <- gsub("is\\.na\\(([^)]+)\\)", "MISSING(\\1)", cond)
   cond <- stringr::str_replace_all(cond, "==", "=")
   cond <- stringr::str_replace_all(cond, "!=", "^=")
-  cond <- stringr::str_replace_all(cond, "&&", "AND")
-  cond <- stringr::str_replace_all(cond, "\\|\\|", "OR")
+  # Multi-char operators first, then single-char (order matters)
+  cond <- stringr::str_replace_all(cond, "&&", " AND ")
+  cond <- stringr::str_replace_all(cond, "\\|\\|", " OR ")
+  # Single-char R operators (common in older R code and vectorized contexts)
+  cond <- gsub("(?<![=^<>!])&(?!&)", " AND ", cond, perl = TRUE)
+  cond <- gsub("(?<![|])\\|(?!\\|)", " OR ", cond, perl = TRUE)
+  # R logical NOT (standalone !) -> SAS NOT; avoid ^= already converted
+  cond <- gsub("!(?![=M])", "NOT ", cond, perl = TRUE)
   cond <- stringr::str_replace_all(cond, "\\$", ".")
+  # Convert R literals to SAS equivalents
+  cond <- stringr::str_replace_all(cond, "\\bTRUE\\b", "1")
+  cond <- stringr::str_replace_all(cond, "\\bFALSE\\b", "0")
+  cond <- stringr::str_replace_all(cond, "\\bNA\\b", ".")
+  # Collapse extra whitespace
+  cond <- gsub("\\s{2,}", " ", cond)
   cond
 }
 

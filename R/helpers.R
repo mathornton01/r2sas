@@ -109,6 +109,61 @@ r2sas_file <- function(r_path, sas_path = NULL, verbose = TRUE) {
   invisible(sas_path)
 }
 
+#' Generate SAS IF/THEN assignment blocks from a conditions table
+#'
+#' Inspired by MSToolkit's \code{convertToSASCode()} pattern: given a
+#' data frame (or 3-column matrix) of condition/variable/value rows, emit
+#' SAS \code{IF condition THEN variable = value;} statements.
+#' This is independently reimplemented under MIT (MSToolkit is GPL).
+#'
+#' @param conditions A data frame or matrix with at least 3 columns:
+#'   \itemize{
+#'     \item Column 1 (or named \code{condition}): R/SAS condition expression
+#'     \item Column 2 (or named \code{variable}): SAS variable name to assign
+#'     \item Column 3 (or named \code{value}): value to assign
+#'   }
+#' @param convert_cond Logical. If TRUE (default), run R->SAS condition conversion
+#'   on column 1 before emitting (e.g., \code{==} -> \code{=}, \code{&&} -> \code{AND}).
+#' @param else_missing Logical. If TRUE (default), emit \code{ELSE variable = .;}
+#'   after the last IF block for each unique variable.
+#' @return A single character string of SAS code.
+#' @export
+#'
+#' @examples
+#' conds <- data.frame(
+#'   condition = c("age >= 18 && age < 65", "age >= 65"),
+#'   variable  = c("age_group", "age_group"),
+#'   value     = c('"adult"', '"senior"'),
+#'   stringsAsFactors = FALSE
+#' )
+#' cat(r2sas_conditions(conds))
+r2sas_conditions <- function(conditions, convert_cond = TRUE, else_missing = TRUE) {
+  if (is.matrix(conditions)) conditions <- as.data.frame(conditions, stringsAsFactors = FALSE)
+  # Normalise column names
+  nms <- names(conditions)
+  cond_col  <- if ("condition" %in% nms) "condition" else nms[1]
+  var_col   <- if ("variable"  %in% nms) "variable"  else nms[2]
+  value_col <- if ("value"     %in% nms) "value"     else nms[3]
+
+  lines <- character(0)
+  for (i in seq_len(nrow(conditions))) {
+    cond  <- as.character(conditions[i, cond_col])
+    vname <- as.character(conditions[i, var_col])
+    val   <- as.character(conditions[i, value_col])
+    if (convert_cond) cond <- .r_to_sas_cond(cond)
+    lines <- c(lines, paste0("  IF ", cond, " THEN ", vname, " = ", val, ";"))
+  }
+
+  if (else_missing) {
+    vars <- unique(as.character(conditions[[var_col]]))
+    for (v in vars) {
+      lines <- c(lines, paste0("  ELSE ", v, " = .;"))
+    }
+  }
+
+  paste(c("DATA _NULL_;", "  SET mydata;", lines, "RUN;"), collapse = "\n")
+}
+
 #' Print a quick-reference table of common R -> SAS equivalents
 #'
 #' @return Invisibly returns a data frame of equivalents.

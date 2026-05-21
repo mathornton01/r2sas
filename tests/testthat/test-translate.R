@@ -650,3 +650,108 @@ test_that("r2sas_plot() handles boxplot", {
   out <- r2sas_plot("ggplot(df, aes(x = group, y = val)) + geom_boxplot()")
   expect_true(grepl("VBOX", out))
 })
+
+# ============================================================
+# SECTION 16: Enhanced Operator Conversions (absorbed from MSToolkit pattern)
+# ============================================================
+
+test_that("single & converts to AND in conditions", {
+  out <- r2sas_expr("df %>% filter(age > 18 & status == 'active')")
+  expect_true(grepl("AND", out))
+  # WHERE clause should not contain bare & (comment may preserve original)
+  expect_true(grepl("WHERE age > 18 AND status = 'active'", out))
+})
+
+test_that("single | converts to OR in conditions", {
+  out <- r2sas_expr("df %>% filter(age < 5 | age > 65)")
+  expect_true(grepl("OR", out))
+})
+
+test_that("&& converts to AND in conditions", {
+  out <- r2sas_expr("df %>% filter(age >= 18 && bmi < 30)")
+  expect_true(grepl("AND", out))
+})
+
+test_that("|| converts to OR in conditions", {
+  out <- r2sas_expr("df %>% filter(site == 'A' || site == 'B')")
+  expect_true(grepl("OR", out))
+})
+
+test_that("standalone ! converts to NOT in conditions", {
+  out <- r2sas_expr("df %>% filter(!enrolled)")
+  expect_true(grepl("NOT enrolled", out))
+})
+
+# ============================================================
+# SECTION 17: r2sas_conditions() bulk IF/THEN generator
+# (Independently implemented; inspired by MSToolkit convertToSASCode pattern)
+# ============================================================
+
+test_that("r2sas_conditions generates IF/THEN blocks from data frame", {
+  conds <- data.frame(
+    condition = c("age >= 18", "age < 18"),
+    variable  = c("adult_flag", "adult_flag"),
+    value     = c("1", "0"),
+    stringsAsFactors = FALSE
+  )
+  out <- r2sas_conditions(conds)
+  expect_true(grepl("IF age >= 18 THEN adult_flag = 1;", out))
+  expect_true(grepl("IF age < 18 THEN adult_flag = 0;", out))
+  expect_true(grepl("DATA", out))
+  expect_true(grepl("RUN;", out))
+})
+
+test_that("r2sas_conditions converts R operators in conditions when convert_cond=TRUE", {
+  conds <- data.frame(
+    condition = c("age >= 18 && enrolled == TRUE"),
+    variable  = c("eligible"),
+    value     = c("1"),
+    stringsAsFactors = FALSE
+  )
+  out <- r2sas_conditions(conds, convert_cond = TRUE)
+  expect_true(grepl("AND", out))
+  expect_true(grepl("enrolled = 1", out))  # TRUE -> 1
+})
+
+test_that("r2sas_conditions with else_missing adds ELSE clause", {
+  conds <- data.frame(
+    condition = c("bmi > 30"),
+    variable  = c("obese"),
+    value     = c("1"),
+    stringsAsFactors = FALSE
+  )
+  out <- r2sas_conditions(conds, else_missing = TRUE)
+  expect_true(grepl("ELSE obese = .;", out))
+})
+
+test_that("r2sas_conditions with else_missing=FALSE omits ELSE", {
+  conds <- data.frame(
+    condition = c("bmi > 30"),
+    variable  = c("obese"),
+    value     = c("1"),
+    stringsAsFactors = FALSE
+  )
+  out <- r2sas_conditions(conds, else_missing = FALSE)
+  expect_false(grepl("ELSE", out))
+})
+
+test_that("r2sas_conditions accepts a matrix input", {
+  m <- matrix(c("score > 90", "grade", "\"A\"",
+                "score > 80", "grade", "\"B\""),
+              ncol = 3, byrow = TRUE)
+  out <- r2sas_conditions(m)
+  expect_true(grepl("IF score > 90 THEN grade", out))
+  expect_true(grepl("IF score > 80 THEN grade", out))
+})
+
+test_that("r2sas_conditions handles multiple distinct variables", {
+  conds <- data.frame(
+    condition = c("age >= 65", "bmi > 30"),
+    variable  = c("senior", "obese"),
+    value     = c("1", "1"),
+    stringsAsFactors = FALSE
+  )
+  out <- r2sas_conditions(conds, else_missing = TRUE)
+  expect_true(grepl("ELSE senior = .;", out))
+  expect_true(grepl("ELSE obese = .;", out))
+})
