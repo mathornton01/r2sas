@@ -1,0 +1,25 @@
+Package: r2sas
+Type: Package
+Title: Convert R Code and Analysis to SAS Language
+Version: 0.1.0
+Date: 2026-05-21
+Authors@R: person("Herald", "Agent", email = "herald@optiplex-node-01", role = c("aut", "cre"))
+Description: Translates common R expressions, data manipulation idioms, and
+    statistical model calls into equivalent SAS language syntax. Supports
+    conversion of data.frame operations, dplyr verbs, base R statistics
+    (lm, glm, t.test, chisq.test, etc.), and basic ggplot2 chart calls
+    into SAS DATA steps and PROC steps. Designed as a learning aid and
+    migration helper for analysts moving between R and SAS.
+License: MIT + file LICENSE
+Encoding: UTF-8
+RoxygenNote: 7.3.1
+Imports:
+    stringr,
+    methods
+Suggests:
+    testthat (>= 3.0.0),
+    knitr,
+    rmarkdown
+Config/testthat/edition: 3
+URL: https://github.com/mathornton01/r2sas
+BugReports: https://github.com/mathornton01/r2sas/issues
