@@ -31,7 +31,8 @@ NULL
   sas <- c(paste0("/* R (dplyr): ", line, " */"))
 
   if (stringr::str_detect(line, "\\bfilter\\s*\\(")) {
-    cond <- stringr::str_match(line, "filter\\s*\\(([^)]+)\\)")[, 2]
+    cond <- .extract_args(line, "filter")
+    if (is.na(cond)) cond <- stringr::str_match(line, "filter\\s*\\(([^)]+)\\)")[, 2]
     cond_sas <- .r_to_sas_cond(cond)
     sas <- c(sas, "DATA filtered;", paste0("  SET source_data;"),
              paste0("  WHERE ", cond_sas, ";"), "RUN;", "")
@@ -82,7 +83,7 @@ NULL
 #' @return Character vector of SAS lines
 #' @export
 r2sas_model <- function(line, verbose = FALSE) {
-  .convert_model(line, verbose)
+  paste(.convert_model(line, verbose), collapse = "\n")
 }
 
 .convert_model <- function(line, verbose = FALSE) {
@@ -127,10 +128,14 @@ r2sas_model <- function(line, verbose = FALSE) {
 
 .convert_ttest <- function(line, verbose = FALSE) {
   if (verbose) message("[r2sas] t.test: ", line)
-  args <- stringr::str_match(line, "t\\.test\\s*\\(([^)]+)\\)")[, 2]
+  args <- .extract_args(line, "t\\.test")
+  if (is.na(args)) args <- stringr::str_match(line, "t\\.test\\s*\\(([^)]+)\\)")[, 2]
   mu_m <- stringr::str_match(args, "mu\\s*=\\s*([\\d.]+)")
   mu <- if (!is.na(mu_m[, 2])) mu_m[, 2] else ""
-  two_sample <- stringr::str_detect(args, ",\\s*[a-zA-Z]")
+  # two-sample: has a second positional arg that is NOT a named param (mu=, var.equal=, etc.)
+  two_sample <- !stringr::str_detect(args, "^\\s*[\\w.]+\\s*,\\s*mu\\s*=") &&
+    !stringr::str_detect(args, "^\\s*[\\w.]+\\s*$") &&
+    stringr::str_detect(args, "^\\s*[\\w.]+\\s*,\\s*[a-zA-Z][\\w.]*\\s*(,|$)")
 
   if (two_sample) {
     c(paste0("/* R: ", line, " */"),
@@ -139,8 +144,9 @@ r2sas_model <- function(line, verbose = FALSE) {
       "  VAR numeric_var;",
       "RUN;", "")
   } else {
+    h0_val <- if (nchar(mu) > 0) mu else "0"
     c(paste0("/* R: ", line, " */"),
-      "PROC TTEST DATA=mydata H0=", if (nchar(mu) > 0) mu else "0", ";",
+      paste0("PROC TTEST DATA=mydata H0=", h0_val, ";"),
       "  VAR numeric_var;",
       "RUN;", "")
   }
@@ -187,8 +193,13 @@ r2sas_model <- function(line, verbose = FALSE) {
 
 .convert_table <- function(line, verbose = FALSE) {
   if (verbose) message("[r2sas] table: ", line)
-  args <- stringr::str_match(line, "table\\s*\\(([^)]+)\\)")[, 2]
-  vars <- if (!is.na(args)) gsub("\\$|\\s", "", args) else "var1 var2"
+  args <- .extract_args(line, "table")
+  if (is.na(args)) args <- stringr::str_match(line, "table\\s*\\(([^)]+)\\)")[, 2]
+  # Strip df$col to just col; remove whitespace
+  vars <- if (!is.na(args)) {
+    v <- gsub("\\w+\\$", "", args)   # drop dataset prefix (df$col -> col)
+    gsub("\\s", "", v)               # remove spaces
+  } else "var1 var2"
   var_list <- strsplit(vars, ",")[[1]]
   if (length(var_list) == 1) {
     c(paste0("/* R: ", line, " */"),
@@ -246,7 +257,7 @@ r2sas_model <- function(line, verbose = FALSE) {
 #' @return Character vector of SAS lines
 #' @export
 r2sas_plot <- function(line, verbose = FALSE) {
-  .convert_ggplot(line, verbose)
+  paste(.convert_ggplot(line, verbose), collapse = "\n")
 }
 
 .convert_ggplot <- function(line, verbose = FALSE) {
@@ -285,10 +296,17 @@ r2sas_plot <- function(line, verbose = FALSE) {
 # ---- for loop ----
 
 .convert_for <- function(line, verbose = FALSE) {
-  m <- stringr::str_match(line, "for\\s*\\((\\w+)\\s+in\\s+([^)]+)\\)")
-  var <- if (!is.na(m[, 2])) m[, 2] else "i"
-  seq_str <- if (!is.na(m[, 3])) m[, 3] else "1:10"
-  seq_sas <- gsub("seq\\((\\d+),\\s*(\\d+).*\\)", "\\1 to \\2", seq_str)
+  # Use balanced paren extraction to handle seq(a, b) inside for(i in seq(...))
+  for_inner <- .extract_args(line, "for")
+  if (!is.na(for_inner)) {
+    in_m <- stringr::str_match(for_inner, "^\\s*(\\w+)\\s+in\\s+(.+)$")
+    var <- if (!is.na(in_m[, 2])) in_m[, 2] else "i"
+    seq_str <- if (!is.na(in_m[, 3])) stringr::str_trim(in_m[, 3]) else "1:10"
+  } else {
+    var <- "i"
+    seq_str <- "1:10"
+  }
+  seq_sas <- gsub("seq\\((\\d+),\\s*(\\d+)[^)]*\\)", "\\1 to \\2", seq_str)
   seq_sas <- gsub("(\\d+):(\\d+)", "\\1 to \\2", seq_sas)
   c(paste0("/* R: ", line, " */"),
     paste0("%DO ", var, " = ", seq_sas, ";"),
@@ -321,13 +339,32 @@ r2sas_plot <- function(line, verbose = FALSE) {
   paste0(sas_line, ";")
 }
 
+# ---- balanced paren extractor ----
+
+.extract_args <- function(text, func_name) {
+  pat <- paste0(func_name, "\\s*\\(")
+  m <- regexpr(pat, text)
+  if (m == -1L) return(NA_character_)
+  open_pos <- m + attr(m, "match.length") - 1L
+  chars <- strsplit(text, "")[[1]]
+  depth <- 1L
+  i <- open_pos + 1L
+  while (i <= length(chars) && depth > 0L) {
+    if (chars[i] == "(") depth <- depth + 1L
+    else if (chars[i] == ")") depth <- depth - 1L
+    i <- i + 1L
+  }
+  if (depth == 0L) substr(text, open_pos + 1L, i - 2L) else NA_character_
+}
+
 # ---- condition / operator helpers ----
 
 .r_to_sas_cond <- function(cond) {
+  # Handle !is.na() before is.na() to avoid partial substitution
+  cond <- gsub("!is\\.na\\(([^)]+)\\)", "^MISSING(\\1)", cond)
+  cond <- gsub("is\\.na\\(([^)]+)\\)", "MISSING(\\1)", cond)
   cond <- stringr::str_replace_all(cond, "==", "=")
   cond <- stringr::str_replace_all(cond, "!=", "^=")
-  cond <- stringr::str_replace_all(cond, "\\bis\\.na\\(([^)]+)\\)", "MISSING(\\1)")
-  cond <- stringr::str_replace_all(cond, "\\!is\\.na\\(([^)]+)\\)", "^MISSING(\\1)")
   cond <- stringr::str_replace_all(cond, "&&", "AND")
   cond <- stringr::str_replace_all(cond, "\\|\\|", "OR")
   cond <- stringr::str_replace_all(cond, "\\$", ".")

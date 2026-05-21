@@ -67,7 +67,8 @@ r2sas <- function(x, file = FALSE, output_file = NULL, verbose = FALSE) {
 #' r2sas_expr("lm(y ~ x, data = df)")
 #' r2sas_expr("mean(x, na.rm = TRUE)")
 r2sas_expr <- function(expr, verbose = FALSE) {
-  .convert_line(stringr::str_trim(expr), verbose = verbose)
+  lines <- .convert_line(stringr::str_trim(expr), verbose = verbose)
+  paste(lines, collapse = "\n")
 }
 
 # ---- internal line dispatcher ----
@@ -77,8 +78,9 @@ r2sas_expr <- function(expr, verbose = FALSE) {
   if (stringr::str_detect(line, "\\bdata\\.frame\\s*\\(")) {
     return(.convert_dataframe(line, verbose))
   }
-  # dplyr pipe chains
-  if (stringr::str_detect(line, "%>%|\\|>")) {
+  # dplyr pipe chains and join functions (pipe or standalone)
+  if (stringr::str_detect(line, "%>%|\\|>") ||
+      stringr::str_detect(line, "\\bleft_join\\s*\\(|\\binner_join\\s*\\(|\\bfull_join\\s*\\(|\\bright_join\\s*\\(")) {
     return(.convert_dplyr(line, verbose))
   }
   # lm / glm models
