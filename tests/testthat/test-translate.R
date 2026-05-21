@@ -755,3 +755,212 @@ test_that("r2sas_conditions handles multiple distinct variables", {
   expect_true(grepl("ELSE senior = .;", out))
   expect_true(grepl("ELSE obese = .;", out))
 })
+
+# ============================================================
+# SECTION 18: r2sas_import() - DATA step / PROC IMPORT generator
+# (Independently reimplemented; inspired by MattKelliher-Gibson/r2sas (GPL)
+#  and foreign::write.foreign (GPL) concepts - MIT reimplementation)
+# ============================================================
+
+test_that("r2sas_import generates DATA step with INPUT and $ for character cols", {
+  df <- data.frame(id = 1:3, name = c("Alice", "Bob", "Carol"),
+                   score = c(95.1, 87.3, 92.0), stringsAsFactors = FALSE)
+  out <- r2sas_import(df, "mydata")
+  expect_true(grepl("INPUT", out))
+  expect_true(grepl("name \\$", out))   # character col gets $
+  expect_false(grepl("id \\$", out))    # numeric col does NOT get $
+  expect_false(grepl("score \\$", out)) # numeric col does NOT get $
+})
+
+test_that("r2sas_import generates DATA step with DATALINES when no output_dir", {
+  df <- data.frame(x = 1:2, y = c("a", "b"), stringsAsFactors = FALSE)
+  out <- r2sas_import(df, "testds")
+  expect_true(grepl("DATALINES", out))
+  expect_true(grepl("DATA TESTDS", out))
+  expect_true(grepl("RUN;", out))
+})
+
+test_that("r2sas_import includes LABEL statements for each column", {
+  df <- data.frame(age = c(25, 30), sex = c("M", "F"), stringsAsFactors = FALSE)
+  out <- r2sas_import(df, "demo")
+  expect_true(grepl("LABEL age", out))
+  expect_true(grepl("LABEL sex", out))
+})
+
+test_that("r2sas_import with output_dir writes CSV and generates PROC IMPORT", {
+  df <- data.frame(id = 1:3, val = c(1.1, 2.2, 3.3))
+  tmp <- tempdir()
+  out <- r2sas_import(df, "testdata", output_dir = tmp)
+  expect_true(grepl("PROC IMPORT", out))
+  expect_true(grepl("DBMS=CSV", out))
+  expect_true(grepl("GETNAMES=YES", out))
+  expect_true(grepl("TESTDATA", out))
+  expect_true(file.exists(file.path(tmp, "testdata.csv")))
+})
+
+test_that("r2sas_import returns a single character string", {
+  df <- data.frame(a = 1, b = "x", stringsAsFactors = FALSE)
+  out <- r2sas_import(df, "ds")
+  expect_type(out, "character")
+  expect_length(out, 1)
+})
+
+test_that("r2sas_import handles factor columns as character type", {
+  df <- data.frame(group = factor(c("A", "B", "C")), value = 1:3)
+  out <- r2sas_import(df, "ftest")
+  expect_true(grepl("group \\$", out))
+})
+
+test_that("r2sas_import errors on non-data.frame input", {
+  expect_error(r2sas_import(list(a = 1), "ds"), "data.frame")
+})
+
+# ============================================================
+# SECTION 19: r2sas_proc_format() - PROC FORMAT VALUE statement generator
+# (Inspired by sassy/fmtr CC0 - public domain; MIT reimplementation)
+# ============================================================
+
+test_that("r2sas_proc_format generates PROC FORMAT with VALUE statement", {
+  out <- r2sas_proc_format(c("1" = "Male", "2" = "Female"), "gender")
+  expect_true(grepl("PROC FORMAT", out))
+  expect_true(grepl("VALUE gender", out))
+  expect_true(grepl("RUN;", out))
+})
+
+test_that("r2sas_proc_format uses correct key=label pairs for numeric keys", {
+  out <- r2sas_proc_format(c("1" = "Male", "2" = "Female"), "gender")
+  expect_true(grepl("1='Male'", out))
+  expect_true(grepl("2='Female'", out))
+})
+
+test_that("r2sas_proc_format quotes character keys", {
+  out <- r2sas_proc_format(c("M" = "Male", "F" = "Female"), "sexfmt")
+  expect_true(grepl("'M'='Male'", out))
+  expect_true(grepl("'F'='Female'", out))
+})
+
+test_that("r2sas_proc_format accepts R factor input", {
+  fac <- factor(c("Low", "Med", "High"), levels = c("Low", "Med", "High"))
+  out <- r2sas_proc_format(fac, "sevfmt")
+  expect_true(grepl("PROC FORMAT", out))
+  expect_true(grepl("VALUE sevfmt", out))
+  expect_true(grepl("Low", out))
+  expect_true(grepl("Med", out))
+  expect_true(grepl("High", out))
+})
+
+test_that("r2sas_proc_format uses default fmt_name when not specified", {
+  out <- r2sas_proc_format(c("1" = "Yes", "0" = "No"))
+  expect_true(grepl("VALUE myfmt", out))
+})
+
+test_that("r2sas_proc_format returns a single character string", {
+  out <- r2sas_proc_format(c("A" = "Alpha", "B" = "Beta"), "letters")
+  expect_type(out, "character")
+  expect_length(out, 1)
+})
+
+test_that("r2sas_proc_format errors on unnamed vector", {
+  expect_error(r2sas_proc_format(c("Male", "Female"), "gender"))
+})
+
+# ============================================================
+# SECTION 20: r2sas_transpose() - PROC TRANSPOSE code generator
+# (Inspired by sassy proc_transpose CC0 - public domain; MIT reimplementation)
+# ============================================================
+
+test_that("r2sas_transpose generates PROC TRANSPOSE header", {
+  out <- r2sas_transpose("mydata", c("id", "group"), "score", id = "timepoint")
+  expect_true(grepl("PROC TRANSPOSE", out))
+  expect_true(grepl("DATA=MYDATA", out))
+})
+
+test_that("r2sas_transpose includes BY statement with all variables", {
+  out <- r2sas_transpose("ds", c("id", "group"), "measure")
+  expect_true(grepl("BY id group", out))
+})
+
+test_that("r2sas_transpose includes VAR statement", {
+  out <- r2sas_transpose("ds", "id", "score")
+  expect_true(grepl("VAR score", out))
+})
+
+test_that("r2sas_transpose includes ID statement when id is provided", {
+  out <- r2sas_transpose("ds", "id", "score", id = "visit")
+  expect_true(grepl("ID visit", out))
+})
+
+test_that("r2sas_transpose omits ID statement when id is NULL", {
+  out <- r2sas_transpose("ds", "id", "score", id = NULL)
+  expect_false(grepl("^  ID ", out))
+})
+
+test_that("r2sas_transpose includes RUN; statement", {
+  out <- r2sas_transpose("ds", "id", "val")
+  expect_true(grepl("RUN;", out))
+})
+
+test_that("r2sas_transpose generates _T suffix for output dataset", {
+  out <- r2sas_transpose("patients", "id", "lab_value")
+  expect_true(grepl("OUT=PATIENTS_T", out))
+})
+
+test_that("r2sas_transpose returns a single character string", {
+  out <- r2sas_transpose("ds", "id", "score")
+  expect_type(out, "character")
+  expect_length(out, 1)
+})
+
+# ============================================================
+# SECTION 21: r2sas_merge() - DATA step MERGE generator
+# (Independently implemented under MIT)
+# ============================================================
+
+test_that("r2sas_merge generates DATA MERGE step", {
+  out <- r2sas_merge("patients", "labs", by = "patient_id")
+  expect_true(grepl("DATA", out))
+  expect_true(grepl("MERGE", out))
+  expect_true(grepl("RUN;", out))
+})
+
+test_that("r2sas_merge includes BY clause with specified variable", {
+  out <- r2sas_merge("a", "b", by = "id")
+  expect_true(grepl("BY id", out))
+})
+
+test_that("r2sas_merge includes BY clause with multiple variables", {
+  out <- r2sas_merge("a", "b", by = c("site", "id"))
+  expect_true(grepl("BY site id", out))
+})
+
+test_that("r2sas_merge left join includes IN= conditions and IF _left_", {
+  out <- r2sas_merge("patients", "labs", by = "id", type = "left")
+  expect_true(grepl("IN=_left_", out))
+  expect_true(grepl("IN=_right_", out))
+  expect_true(grepl("IF _left_", out))
+})
+
+test_that("r2sas_merge right join generates IF _right_", {
+  out <- r2sas_merge("a", "b", by = "id", type = "right")
+  expect_true(grepl("IF _right_", out))
+})
+
+test_that("r2sas_merge inner join generates IF _left_ AND _right_", {
+  out <- r2sas_merge("a", "b", by = "id", type = "inner")
+  expect_true(grepl("IF _left_ AND _right_", out))
+})
+
+test_that("r2sas_merge full join generates IF _left_ OR _right_", {
+  out <- r2sas_merge("a", "b", by = "id", type = "full")
+  expect_true(grepl("IF _left_ OR _right_", out))
+})
+
+test_that("r2sas_merge errors on invalid join type", {
+  expect_error(r2sas_merge("a", "b", by = "id", type = "cross"), "type must be")
+})
+
+test_that("r2sas_merge returns a single character string", {
+  out <- r2sas_merge("a", "b", by = "id")
+  expect_type(out, "character")
+  expect_length(out, 1)
+})
